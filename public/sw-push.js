@@ -2,7 +2,7 @@
 // This file is imported by the main service worker
 
 self.addEventListener('push', (event) => {
-  console.log('Push notification received:', event);
+  console.log('[SW] Push received:', event);
 
   let data = {
     title: 'Habitify',
@@ -13,9 +13,15 @@ self.addEventListener('push', (event) => {
 
   if (event.data) {
     try {
-      data = { ...data, ...event.data.json() };
+      const payload = event.data.json();
+      data = { ...data, ...payload };
     } catch (e) {
-      console.error('Error parsing push data:', e);
+      // Fallback: try as text
+      try {
+        data.body = event.data.text() || data.body;
+      } catch (_) {
+        // ignore
+      }
     }
   }
 
@@ -23,13 +29,14 @@ self.addEventListener('push', (event) => {
     body: data.body,
     icon: data.icon || '/pwa-192x192.png',
     badge: data.badge || '/pwa-192x192.png',
-    vibrate: [100, 50, 100],
+    vibrate: [200, 100, 200],
     data: data.data || {},
     actions: [
       { action: 'complete', title: 'Mark Complete' },
       { action: 'snooze', title: 'Remind Later' },
     ],
     requireInteraction: true,
+    renotify: true,
     tag: data.data?.habitId || 'habit-reminder',
   };
 
@@ -39,7 +46,7 @@ self.addEventListener('push', (event) => {
 });
 
 self.addEventListener('notificationclick', (event) => {
-  console.log('Notification clicked:', event);
+  console.log('[SW] Notification clicked:', event.action);
 
   event.notification.close();
 
@@ -48,30 +55,40 @@ self.addEventListener('notificationclick', (event) => {
   const url = event.notification.data?.url || '/';
 
   if (action === 'complete' && habitId) {
-    // Open app to complete the habit
     event.waitUntil(
-      clients.openWindow(`${url}?complete=${habitId}`)
+      self.clients.openWindow(`${url}?complete=${habitId}`)
     );
   } else if (action === 'snooze') {
-    // Could implement snooze logic here
-    console.log('Snooze requested for habit:', habitId);
-  } else {
-    // Default: open the app
+    // Re-show notification after 10 minutes
     event.waitUntil(
-      clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-        // Check if there's already a window open
+      new Promise((resolve) => {
+        setTimeout(() => {
+          self.registration.showNotification(event.notification.title || 'Habitify', {
+            body: event.notification.body || 'Reminder!',
+            icon: '/pwa-192x192.png',
+            badge: '/pwa-192x192.png',
+            vibrate: [200, 100, 200],
+            data: event.notification.data,
+            tag: 'habit-snooze-' + (habitId || Date.now()),
+          }).then(resolve);
+        }, 10 * 60 * 1000);
+      })
+    );
+  } else {
+    // Default: focus existing window or open new one
+    event.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
         for (const client of windowClients) {
           if (client.url.includes(self.location.origin) && 'focus' in client) {
             return client.focus();
           }
         }
-        // Open new window if none found
-        return clients.openWindow(url);
+        return self.clients.openWindow(url);
       })
     );
   }
 });
 
 self.addEventListener('notificationclose', (event) => {
-  console.log('Notification closed:', event);
+  console.log('[SW] Notification closed');
 });

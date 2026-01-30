@@ -8,6 +8,7 @@ import { HabitCalendar } from '../components/habits/HabitCalendar';
 import type { Completion } from '../types/habit';
 import { InstallPrompt } from '../components/InstallPrompt';
 import { NotificationPreferences } from '../components/NotificationPreferences';
+import { NotificationSettings } from '../components/NotificationSettings';
 import { NtfySettings } from '../components/NtfySettings';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { ModeToggle } from '../components/mode-toggle';
@@ -665,6 +666,7 @@ export default function Dashboard() {
                     </DialogHeader>
                     <div className="space-y-4 py-4 overflow-y-auto flex-1">
                         <InstallPrompt />
+                        <NotificationSettings />
                         <NotificationPreferences />
                         <NtfySettings />
                         <AndroidWidgetConnect />
