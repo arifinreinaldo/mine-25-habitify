@@ -8,13 +8,11 @@ export interface PushAction {
   method?: string;
 }
 
-/** habitify_<sanitised email username>. Must stay byte-identical to the client copy
- *  in src/components/CloudPushSettings.tsx — the user reads the topic there and types
- *  it into CloudPush. */
-export function userTopic(prefix: string, email: string): string {
-  const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
-  return `${prefix}_${username}`;
-}
+// The per-user FCM topic is NOT derived here any more. It lives in profiles.push_topic,
+// generated randomly by the database, because the push payload carries a completion
+// token: anyone who can guess the topic and subscribe to it in CloudPush receives a
+// working credential for that user's habits. Senders read the column and skip a user
+// who has none.
 
 /** Returns true when the worker answered 2xx. Logs and returns false otherwise —
  *  never throws, so one bad push cannot kill the batch. */

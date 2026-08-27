@@ -125,12 +125,18 @@ build (writing a stub `dist/index.html`) when only `habitify_widget/` or `*.md` 
 ```
 VITE_SUPABASE_URL
 VITE_SUPABASE_ANON_KEY
-VITE_FCM_TOPIC_PREFIX      # user topic = prefix_username
 ```
+
+The FCM topic is **not** an environment variable and is never derived from the email.
+Each profile carries a random `push_topic` (`habitify_<18 hex chars>`, defaulted by
+Postgres). This is a credential, not an identifier: the push payload contains a habit
+completion token, so anyone who can subscribe to the topic in CloudPush can complete
+that user's habits. Senders read `profiles.push_topic` and skip a user without one;
+`CloudPushSettings.tsx` displays it for the user to paste into CloudPush.
 
 Edge function secrets (set with `npx supabase secrets set`): `NOTIFIER_URL` (the
 `cloudflare-notifier` worker origin), `NOTIFIER_API_KEY` (sent as the `key` header),
-`FCM_TOPIC_PREFIX`, `APP_URL` (Habitify origin for notification action links),
+`APP_URL` (Habitify origin for notification action links),
 `ACTION_TOKEN_SECRET` (HMAC key for `complete-habit` action tokens — generate with
 `openssl rand -base64 32`; read by `send-ntfy-notifications`, `send-streak-reminders`,
 and `complete-habit`). `SUPABASE_SERVICE_ROLE_KEY` is provided by the platform.

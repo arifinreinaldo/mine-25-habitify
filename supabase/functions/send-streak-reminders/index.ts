@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { userTopic, pushFcm, streakActions, mintActionToken, completeUrl } from "../_shared/notifier.ts";
+import { pushFcm, streakActions, mintActionToken, completeUrl } from "../_shared/notifier.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -126,6 +126,7 @@ interface Profile {
   id: string;
   email: string;
   timezone: string;
+  push_topic: string | null;
 }
 
 interface CompletionHistory {
@@ -185,13 +186,8 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const topicPrefix = Deno.env.get("FCM_TOPIC_PREFIX");
     const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/+$/, "");
     const actionTokenSecret = Deno.env.get("ACTION_TOKEN_SECRET");
-
-    if (!topicPrefix) {
-      throw new Error("FCM_TOPIC_PREFIX is not configured");
-    }
 
     // Without APP_URL the action URLs become relative ("/dashboard"), which the worker
     // rejects as not-http(s) with a 422 for the WHOLE request - every push would fail
@@ -212,7 +208,7 @@ Deno.serve(async (req) => {
     // Fetch all profiles with CloudPush enabled
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, email, timezone")
+      .select("id, email, timezone, push_topic")
       .eq("notify_push", true);
 
     if (profilesError) {
@@ -337,7 +333,13 @@ Deno.serve(async (req) => {
       }
 
       // Generate user's topic
-      const topic = userTopic(topicPrefix, profile.email);
+      // Random per-user topic from the database, never derived from the email - the
+      // push carries a completion token, so a guessable topic is a giveaway credential.
+      const topic = profile.push_topic;
+      if (!topic) {
+        console.log(`No push_topic for user ${profile.id}, skipping`);
+        continue;
+      }
 
       // Determine urgency (after 21:00 is urgent)
       const isUrgent = userHour >= 21;

@@ -48,6 +48,10 @@ CREATE TABLE profiles (
   timezone TEXT DEFAULT 'America/New_York',
   notify_push BOOLEAN DEFAULT true,
   notify_email BOOLEAN DEFAULT true,
+  -- FCM topic this user's pushes are sent to. MUST stay unguessable: the push payload
+  -- carries a completion token, so anyone who can subscribe to the topic can complete
+  -- this user's habits. Deriving it from the email username made it guessable.
+  push_topic TEXT UNIQUE DEFAULT ('habitify_' || encode(gen_random_bytes(9), 'hex')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -78,6 +82,14 @@ CREATE INDEX idx_habits_reminder_time ON habits(reminder_time) WHERE reminder_ti
 -- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS notify_email BOOLEAN DEFAULT true;
 -- ALTER TABLE profiles DROP COLUMN IF EXISTS notify_ntfy;
 -- DROP TABLE IF EXISTS push_subscriptions;
+--
+-- Unguessable per-user FCM topic. Backfills every existing row with its own random
+-- value; each user must then re-subscribe in CloudPush to the new topic shown in
+-- Settings. The old habitify_<username> topics stop receiving anything.
+-- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS push_topic TEXT UNIQUE
+--   DEFAULT ('habitify_' || encode(gen_random_bytes(9), 'hex'));
+-- UPDATE profiles SET push_topic = 'habitify_' || encode(gen_random_bytes(9), 'hex')
+--   WHERE push_topic IS NULL;
 
 -- For new installations, these columns are included in the profiles table definition above.
 -- If you're setting up fresh, modify the profiles table creation to include:

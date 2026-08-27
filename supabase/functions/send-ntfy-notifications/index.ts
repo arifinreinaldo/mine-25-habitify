@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { userTopic, pushFcm, reminderActions, mintActionToken, completeUrl } from "../_shared/notifier.ts";
+import { pushFcm, reminderActions, mintActionToken, completeUrl } from "../_shared/notifier.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,6 +44,7 @@ interface Profile {
   id: string;
   email: string;
   timezone: string;
+  push_topic: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -55,13 +56,8 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const topicPrefix = Deno.env.get("FCM_TOPIC_PREFIX");
     const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/+$/, "");
     const actionTokenSecret = Deno.env.get("ACTION_TOKEN_SECRET");
-
-    if (!topicPrefix) {
-      throw new Error("FCM_TOPIC_PREFIX is not configured");
-    }
 
     // Without APP_URL the action URLs become relative ("/dashboard"), which the worker
     // rejects as not-http(s) with a 422 for the WHOLE request - every push would fail
@@ -106,7 +102,7 @@ Deno.serve(async (req) => {
     // Fetch profiles with timezone and email (only those with CloudPush enabled)
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, email, timezone, notify_push")
+      .select("id, email, timezone, notify_push, push_topic")
       .in("id", userIds)
       .eq("notify_push", true);
 
@@ -134,8 +130,13 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Generate unique topic for this user
-      const topic = userTopic(topicPrefix, userEmail);
+      // Random per-user topic from the database, never derived from the email - the
+      // push carries a completion token, so a guessable topic is a giveaway credential.
+      const topic = profile?.push_topic;
+      if (!topic) {
+        console.log(`No push_topic for user ${habit.user_id}, skipping`);
+        continue;
+      }
 
       // Get current time in user's timezone
       const userLocalTime = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
