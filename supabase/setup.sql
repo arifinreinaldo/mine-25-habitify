@@ -47,7 +47,6 @@ CREATE TABLE profiles (
   email TEXT,
   timezone TEXT DEFAULT 'America/New_York',
   notify_push BOOLEAN DEFAULT true,
-  notify_ntfy BOOLEAN DEFAULT true,
   notify_email BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -73,36 +72,19 @@ CREATE TRIGGER on_auth_user_created
 -- 5. INDEX for reminder queries
 CREATE INDEX idx_habits_reminder_time ON habits(reminder_time) WHERE reminder_time IS NOT NULL;
 
--- 6. PUSH SUBSCRIPTIONS TABLE (for Web Push notifications)
-CREATE TABLE push_subscriptions (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-  endpoint TEXT NOT NULL,
-  p256dh TEXT NOT NULL,
-  auth TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, endpoint)
-);
-
-CREATE INDEX idx_push_subscriptions_user_id ON push_subscriptions(user_id);
-
-ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users manage own push subscriptions" ON push_subscriptions FOR ALL USING (auth.uid() = user_id);
-
--- 7. NOTIFICATION PREFERENCES (add columns to profiles)
+-- 6. NOTIFICATION PREFERENCES (add columns to profiles)
 -- Run this migration for existing databases:
 -- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS notify_push BOOLEAN DEFAULT true;
--- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS notify_ntfy BOOLEAN DEFAULT true;
 -- ALTER TABLE profiles ADD COLUMN IF NOT EXISTS notify_email BOOLEAN DEFAULT true;
+-- ALTER TABLE profiles DROP COLUMN IF EXISTS notify_ntfy;
+-- DROP TABLE IF EXISTS push_subscriptions;
 
 -- For new installations, these columns are included in the profiles table definition above.
 -- If you're setting up fresh, modify the profiles table creation to include:
 --   notify_push BOOLEAN DEFAULT true,
---   notify_ntfy BOOLEAN DEFAULT true,
 --   notify_email BOOLEAN DEFAULT true,
 
--- 8. CRON SETUP (run after enabling pg_cron and pg_net extensions in Supabase dashboard)
+-- 7. CRON SETUP (run after enabling pg_cron and pg_net extensions in Supabase dashboard)
 -- Enable extensions first:
 -- CREATE EXTENSION IF NOT EXISTS pg_cron;
 -- CREATE EXTENSION IF NOT EXISTS pg_net;
@@ -123,8 +105,22 @@ SELECT cron.schedule(
   $$
 );
 
+-- Schedule habit reminder function every 15 minutes (matches a 5-minute window per user timezone)
+-- This sends CloudPush (FCM) reminders for individual habits via the cloudflare-notifier worker
+SELECT cron.schedule(
+  'send-ntfy-notifications',
+  '*/15 * * * *',
+  $$
+  SELECT net.http_post(
+    url := 'YOUR_SUPABASE_URL/functions/v1/send-ntfy-notifications',
+    headers := '{"Content-Type": "application/json", "Authorization": "Bearer YOUR_ANON_KEY"}'::jsonb,
+    body := '{}'::jsonb
+  ) AS request_id;
+  $$
+);
+
 -- Schedule streak reminder function every 15 minutes (sends between 18:00-23:00 user local time)
--- This sends Duolingo-style passive-aggressive reminders when streaks are at risk via ntfy
+-- This sends Duolingo-style passive-aggressive reminders when streaks are at risk via CloudPush (FCM)
 SELECT cron.schedule(
   'send-streak-reminders',
   '*/15 * * * *',
@@ -136,23 +132,9 @@ SELECT cron.schedule(
   ) AS request_id;
   $$
 );
-
--- Schedule streak push notification reminder every 15 minutes (sends between 18:00-23:00 user local time)
--- This sends Duolingo-style passive-aggressive reminders when streaks are at risk via Web Push
-SELECT cron.schedule(
-  'send-streak-push-notifications',
-  '*/15 * * * *',
-  $$
-  SELECT net.http_post(
-    url := 'YOUR_SUPABASE_URL/functions/v1/send-streak-push-notifications',
-    headers := '{"Content-Type": "application/json", "Authorization": "Bearer YOUR_ANON_KEY"}'::jsonb,
-    body := '{}'::jsonb
-  ) AS request_id;
-  $$
-);
 */
 
--- 9. RPC FUNCTION: Fetch dashboard data in single call (habits + completions)
+-- 8. RPC FUNCTION: Fetch dashboard data in single call (habits + completions)
 -- This reduces API calls from 2 to 1 on dashboard load
 CREATE OR REPLACE FUNCTION get_dashboard_data(p_year_ago DATE)
 RETURNS JSON AS $$
@@ -178,7 +160,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- 10. RPC FUNCTION: Get widget data (streak, progress) for Android widget
+-- 9. RPC FUNCTION: Get widget data (streak, progress) for Android widget
 CREATE OR REPLACE FUNCTION get_widget_data()
 RETURNS JSON AS $$
 DECLARE

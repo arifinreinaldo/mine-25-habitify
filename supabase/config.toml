@@ -1,0 +1,4 @@
+project_id = "mine25-habitify"
+
+[functions.complete-habit]
+verify_jwt = false

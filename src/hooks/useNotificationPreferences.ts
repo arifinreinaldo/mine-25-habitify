@@ -2,11 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../features/auth/AuthContext';
 
-export type NotificationChannel = 'notify_push' | 'notify_ntfy' | 'notify_email';
+export type NotificationChannel = 'notify_push' | 'notify_email';
 
 export interface NotificationPreferences {
   notify_push: boolean;
-  notify_ntfy: boolean;
   notify_email: boolean;
 }
 
@@ -21,7 +20,6 @@ export function useNotificationPreferences() {
   const [state, setState] = useState<NotificationPreferencesState>({
     preferences: {
       notify_push: true,
-      notify_ntfy: true,
       notify_email: true,
     },
     isLoading: true,
@@ -39,7 +37,7 @@ export function useNotificationPreferences() {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('notify_push, notify_ntfy, notify_email')
+          .select('notify_push, notify_email')
           .eq('id', user.id)
           .single();
 
@@ -55,7 +53,6 @@ export function useNotificationPreferences() {
         setState({
           preferences: {
             notify_push: data?.notify_push ?? true,
-            notify_ntfy: data?.notify_ntfy ?? true,
             notify_email: data?.notify_email ?? true,
           },
           isLoading: false,

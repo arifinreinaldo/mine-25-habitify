@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { userTopic, pushFcm, reminderActions, mintActionToken, completeUrl } from "../_shared/notifier.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -45,48 +46,6 @@ interface Profile {
   timezone: string;
 }
 
-// Generate topic name from email: ntfy_topic_prefix + email username
-function getUserTopic(topicPrefix: string, email: string): string {
-  const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
-  return `${topicPrefix}_${username}`;
-}
-
-async function sendNtfyNotification(
-  topic: string,
-  title: string,
-  message: string,
-  icon: string,
-  priority: number = 4
-): Promise<boolean> {
-  try {
-    // Use JSON body format to handle special characters properly
-    const response = await fetch("https://ntfy.sh", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        topic: topic,
-        title: title,
-        message: message,
-        priority: priority,
-        tags: [icon.replace(/[^\p{Emoji}]/gu, "") || "bell"], // Extract emoji or use default
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`ntfy.sh error: ${response.status} ${errorText}`);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("ntfy.sh error:", error);
-    return false;
-  }
-}
-
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -96,10 +55,23 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const ntfyTopic = Deno.env.get("NTFY_TOPIC");
+    const topicPrefix = Deno.env.get("FCM_TOPIC_PREFIX");
+    const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/+$/, "");
+    const actionTokenSecret = Deno.env.get("ACTION_TOKEN_SECRET");
 
-    if (!ntfyTopic) {
-      throw new Error("NTFY_TOPIC is not configured");
+    if (!topicPrefix) {
+      throw new Error("FCM_TOPIC_PREFIX is not configured");
+    }
+
+    // Without APP_URL the action URLs become relative ("/dashboard"), which the worker
+    // rejects as not-http(s) with a 422 for the WHOLE request - every push would fail
+    // silently, blaming the action field instead of the missing secret. Fail loudly here.
+    if (!appUrl) {
+      throw new Error("APP_URL is not configured");
+    }
+
+    if (!actionTokenSecret) {
+      throw new Error("ACTION_TOKEN_SECRET is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -131,12 +103,12 @@ Deno.serve(async (req) => {
     // Get unique user IDs
     const userIds = [...new Set(habits.map((h: Habit) => h.user_id))];
 
-    // Fetch profiles with timezone and email (only those with ntfy enabled)
+    // Fetch profiles with timezone and email (only those with CloudPush enabled)
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, email, timezone, notify_ntfy")
+      .select("id, email, timezone, notify_push")
       .in("id", userIds)
-      .eq("notify_ntfy", true);
+      .eq("notify_push", true);
 
     if (profilesError) {
       console.error("Error fetching profiles:", profilesError);
@@ -163,7 +135,7 @@ Deno.serve(async (req) => {
       }
 
       // Generate unique topic for this user
-      const userTopic = getUserTopic(ntfyTopic, userEmail);
+      const topic = userTopic(topicPrefix, userEmail);
 
       // Get current time in user's timezone
       const userLocalTime = new Date(now.toLocaleString("en-US", { timeZone: userTimezone }));
@@ -205,29 +177,34 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Send ntfy notification to user's unique topic
+      // Send FCM notification to user's unique topic
       const title = `${habit.icon} ${habit.name}`;
-      const message = getRandomMessage(habit.name);
+      const body = getRandomMessage(habit.name);
 
-      console.log(`Sending to topic: ${userTopic}`);
+      console.log(`Sending to topic: ${topic}`);
 
       try {
-        const success = await sendNtfyNotification(
-          userTopic,
+        const token = await mintActionToken(actionTokenSecret, {
+          userId: habit.user_id,
+          target: habit.id,
+          date: today,
+        });
+
+        const success = await pushFcm({
           title,
-          message,
-          habit.icon,
-          4 // High priority
-        );
+          body,
+          topic,
+          actions: reminderActions(appUrl, completeUrl(supabaseUrl, token)),
+        });
 
         if (success) {
-          console.log(`Sent ntfy notification for ${habit.name}`);
+          console.log(`Sent FCM notification for ${habit.name}`);
           sentCount++;
         } else {
-          errors.push(`${habit.name}: ntfy delivery failed`);
+          errors.push(`${habit.name}: FCM delivery failed`);
         }
       } catch (error) {
-        console.error(`Failed to send ntfy for ${habit.name}:`, error);
+        console.error(`Failed to send FCM for ${habit.name}:`, error);
         errors.push(`${habit.name}: ${error}`);
       }
     }

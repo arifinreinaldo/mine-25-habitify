@@ -1,16 +1,16 @@
 import { useState } from 'react';
-import { Bell, Copy, Check, ExternalLink } from 'lucide-react';
+import { Bell, Copy, Check } from 'lucide-react';
 import { Button } from './ui/button';
 import { useAuth } from '../features/auth/AuthContext';
 
-const NTFY_TOPIC_PREFIX = import.meta.env.VITE_NTFY_TOPIC_PREFIX || 'habitify';
+const FCM_TOPIC_PREFIX = import.meta.env.VITE_FCM_TOPIC_PREFIX || 'habitify';
 
 function getUserTopic(topicPrefix: string, email: string): string {
   const username = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
   return `${topicPrefix}_${username}`;
 }
 
-export function NtfySettings() {
+export function CloudPushSettings() {
   const { user } = useAuth();
   const [copied, setCopied] = useState(false);
 
@@ -18,8 +18,7 @@ export function NtfySettings() {
     return null;
   }
 
-  const userTopic = getUserTopic(NTFY_TOPIC_PREFIX, user.email);
-  const subscribeUrl = `https://ntfy.sh/${userTopic}`;
+  const userTopic = getUserTopic(FCM_TOPIC_PREFIX, user.email);
 
   const copyTopic = async () => {
     await navigator.clipboard.writeText(userTopic);
@@ -32,9 +31,9 @@ export function NtfySettings() {
       <div className="flex items-center gap-3">
         <Bell className="w-5 h-5 text-muted-foreground" />
         <div className="flex-1">
-          <p className="text-sm font-medium">Phone Notifications (ntfy)</p>
+          <p className="text-sm font-medium">Phone Notifications (CloudPush)</p>
           <p className="text-xs text-muted-foreground">
-            Get push notifications via ntfy.sh
+            Get push notifications via the CloudPush app
           </p>
         </div>
       </div>
@@ -58,21 +57,11 @@ export function NtfySettings() {
       <div className="space-y-2 text-xs text-muted-foreground">
         <p className="font-medium">Setup:</p>
         <ol className="list-decimal list-inside space-y-1">
-          <li>Install <strong>ntfy</strong> app on your phone</li>
-          <li>Subscribe to: <code className="bg-background px-1 rounded">{userTopic}</code></li>
-          <li>Done! You'll receive habit reminders</li>
+          <li>Install the <strong>CloudPush</strong> app</li>
+          <li>Open Subscriptions, add a topic, paste the topic above</li>
+          <li>Done — habit reminders arrive there</li>
         </ol>
       </div>
-
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-full"
-        onClick={() => window.open(subscribeUrl, '_blank')}
-      >
-        <ExternalLink className="h-4 w-4 mr-2" />
-        Open in ntfy.sh
-      </Button>
     </div>
   );
 }

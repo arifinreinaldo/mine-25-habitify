@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { userTopic, pushFcm, streakActions, mintActionToken, completeUrl } from "../_shared/notifier.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -132,12 +133,6 @@ interface CompletionHistory {
   completed_at: string;
 }
 
-// Generate topic name from email
-function getUserTopic(topicPrefix: string, email: string): string {
-  const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "");
-  return `${topicPrefix}_${username}`;
-}
-
 // Calculate current streak for a habit
 function calculateCurrentStreak(
   completionDates: string[],
@@ -181,40 +176,6 @@ function calculateCurrentStreak(
   return streak;
 }
 
-async function sendNtfyNotification(
-  topic: string,
-  title: string,
-  message: string,
-  priority: number = 5
-): Promise<boolean> {
-  try {
-    const response = await fetch("https://ntfy.sh", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        topic: topic,
-        title: title,
-        message: message,
-        priority: priority,
-        tags: ["fire", "warning"],
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`ntfy.sh error: ${response.status} ${errorText}`);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("ntfy.sh error:", error);
-    return false;
-  }
-}
-
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -224,10 +185,23 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const ntfyTopic = Deno.env.get("NTFY_TOPIC");
+    const topicPrefix = Deno.env.get("FCM_TOPIC_PREFIX");
+    const appUrl = (Deno.env.get("APP_URL") || "").replace(/\/+$/, "");
+    const actionTokenSecret = Deno.env.get("ACTION_TOKEN_SECRET");
 
-    if (!ntfyTopic) {
-      throw new Error("NTFY_TOPIC is not configured");
+    if (!topicPrefix) {
+      throw new Error("FCM_TOPIC_PREFIX is not configured");
+    }
+
+    // Without APP_URL the action URLs become relative ("/dashboard"), which the worker
+    // rejects as not-http(s) with a 422 for the WHOLE request - every push would fail
+    // silently, blaming the action field instead of the missing secret. Fail loudly here.
+    if (!appUrl) {
+      throw new Error("APP_URL is not configured");
+    }
+
+    if (!actionTokenSecret) {
+      throw new Error("ACTION_TOKEN_SECRET is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -235,18 +209,18 @@ Deno.serve(async (req) => {
 
     console.log(`Current UTC time: ${now.toISOString()}`);
 
-    // Fetch all profiles with ntfy enabled
+    // Fetch all profiles with CloudPush enabled
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("id, email, timezone")
-      .eq("notify_ntfy", true);
+      .eq("notify_push", true);
 
     if (profilesError) {
       throw profilesError;
     }
 
     if (!profiles || profiles.length === 0) {
-      console.log("No users with ntfy enabled");
+      console.log("No users with CloudPush enabled");
       return new Response(
         JSON.stringify({ message: "No users to notify", sent: 0 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -363,30 +337,45 @@ Deno.serve(async (req) => {
       }
 
       // Generate user's topic
-      const userTopic = getUserTopic(ntfyTopic, profile.email);
+      const topic = userTopic(topicPrefix, profile.email);
 
       // Determine urgency (after 21:00 is urgent)
       const isUrgent = userHour >= 21;
 
       // Generate message
-      const message = getRandomMessage(maxStreak, incompleteHabits.length, isUrgent);
+      const body = getRandomMessage(maxStreak, incompleteHabits.length, isUrgent);
       const title = `${habitWithMaxStreak.icon} Your ${maxStreak} day streak is in danger!`;
 
       console.log(`Sending streak reminder to ${profile.email}: ${maxStreak} day streak at risk`);
 
       try {
-        const success = await sendNtfyNotification(
-          userTopic,
+        const allToken = await mintActionToken(actionTokenSecret, {
+          userId: profile.id,
+          target: "all",
+          date: today,
+        });
+        const minimumToken = await mintActionToken(actionTokenSecret, {
+          userId: profile.id,
+          target: habitWithMaxStreak.id,
+          date: today,
+        });
+
+        const success = await pushFcm({
           title,
-          message,
-          isUrgent ? 5 : 4 // Max priority if urgent
-        );
+          body,
+          topic,
+          actions: streakActions(
+            appUrl,
+            completeUrl(supabaseUrl, allToken),
+            completeUrl(supabaseUrl, minimumToken),
+          ),
+        });
 
         if (success) {
           console.log(`Sent streak reminder to ${profile.email}`);
           sentCount++;
         } else {
-          errors.push(`${profile.email}: ntfy delivery failed`);
+          errors.push(`${profile.email}: FCM delivery failed`);
         }
       } catch (error) {
         console.error(`Failed to send streak reminder to ${profile.email}:`, error);

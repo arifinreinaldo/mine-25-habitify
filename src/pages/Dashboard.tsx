@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../features/auth/AuthContext';
@@ -8,8 +8,7 @@ import { HabitCalendar } from '../components/habits/HabitCalendar';
 import type { Completion } from '../types/habit';
 import { InstallPrompt } from '../components/InstallPrompt';
 import { NotificationPreferences } from '../components/NotificationPreferences';
-import { NotificationSettings } from '../components/NotificationSettings';
-import { NtfySettings } from '../components/NtfySettings';
+import { CloudPushSettings } from '../components/CloudPushSettings';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { ModeToggle } from '../components/mode-toggle';
 import type { Habit, StreakData } from '../types/habit';
@@ -253,6 +252,42 @@ export default function Dashboard() {
             });
         }
     }, [completedIds, user]);
+
+    // Unused since notification actions moved to token-authenticated background POSTs
+    // (supabase/functions/complete-habit) — nothing emits a "?complete=" URL any more.
+    // Kept in place as a working fallback for a link-based action; see
+    // docs/fcm-action-token-spec.md section 5.6.
+    const completeParamHandled = useRef(false);
+
+    useEffect(() => {
+        if (loading || completeParamHandled.current) return;
+        const param = new URLSearchParams(window.location.search).get('complete');
+        if (!param) return;
+        completeParamHandled.current = true;
+        // Strip the param so a refresh does not re-fire the completion.
+        window.history.replaceState({}, '', window.location.pathname);
+
+        const pending = param === 'all'
+            ? todaysHabits.filter(h => !completedIds.has(h.id))
+            : todaysHabits.filter(h => h.id === param && !completedIds.has(h.id));
+        if (pending.length === 0) return;
+
+        (async () => {
+            const { error } = await supabase.from('completions').insert(
+                pending.map(h => ({
+                    habit_id: h.id,
+                    user_id: user!.id,
+                    completed_at: today,
+                    value: 1,
+                }))
+            );
+            if (error) {
+                console.error('Error completing from notification:', error);
+                return;
+            }
+            await fetchData();
+        })();
+    }, [loading, todaysHabits, completedIds, user]);
 
     const handleUpdateProgress = useCallback(async (habitId: string, newValue: number) => {
         const habit = habits.find(h => h.id === habitId);
@@ -666,9 +701,8 @@ export default function Dashboard() {
                     </DialogHeader>
                     <div className="space-y-4 py-4 overflow-y-auto flex-1">
                         <InstallPrompt />
-                        <NotificationSettings />
                         <NotificationPreferences />
-                        <NtfySettings />
+                        <CloudPushSettings />
                         <AndroidWidgetConnect />
                     </div>
                 </DialogContent>
