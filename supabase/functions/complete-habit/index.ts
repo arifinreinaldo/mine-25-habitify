@@ -129,43 +129,19 @@ function jsonError(status: number, message: string) {
   );
 }
 
-/** The receipt is the one HTML sink in this file. Every current caller passes a literal
- *  or an integer, but escaping here means adding a habit name to the copy later cannot
- *  turn into stored XSS on the functions origin. */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function htmlReceipt(status: number, rawTitle: string, rawBody: string) {
-  const title = escapeHtml(rawTitle);
-  const body = escapeHtml(rawBody);
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${title}</title>
-<style>
-  body { margin:0; padding:40px 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#1a1a2e; color:#fff; display:flex; justify-content:center; }
-  .card { max-width:420px; text-align:center; background:#16213e; border-radius:16px; padding:32px 24px; }
-  h1 { font-size:20px; margin:0 0 12px; }
-  p { color:#a0aec0; font-size:15px; line-height:1.5; margin:0; }
-</style>
-</head>
-<body>
-  <div class="card">
-    <h1>${title}</h1>
-    <p>${body}</p>
-  </div>
-</body>
-</html>`;
-  return new Response(html, {
+/**
+ * Plain text, not HTML, and deliberately so. The Supabase edge gateway rewrites every
+ * function response to `Content-Type: text/plain` and adds
+ * `Content-Security-Policy: default-src 'none'; sandbox` plus `X-Content-Type-Options:
+ * nosniff` - verified against the deployed function, which sets `text/html` and still
+ * arrives as `text/plain`. An HTML page therefore renders as raw markup in the browser.
+ * Matching the body to what the platform will actually serve is the only way this reads
+ * correctly, and it removes the file's one HTML injection sink at the same time.
+ */
+function textReceipt(status: number, title: string, body: string) {
+  return new Response(`${title}\n\n${body}\n`, {
     status,
-    headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" },
+    headers: { ...corsHeaders, "Content-Type": "text/plain; charset=utf-8" },
   });
 }
 
@@ -175,7 +151,7 @@ function respondSuccess(isGet: boolean, completed: number) {
     const body = completed > 0
       ? `${completed} habit${completed === 1 ? "" : "s"} marked complete.`
       : "Nothing to do here — already completed.";
-    return htmlReceipt(200, title, body);
+    return textReceipt(200, title, body);
   }
   return jsonSuccess("Completed", { completed });
 }
@@ -183,7 +159,7 @@ function respondSuccess(isGet: boolean, completed: number) {
 function respondError(isGet: boolean, status: number, message: string) {
   if (isGet) {
     const title = status === 410 ? "Link expired" : "Something went wrong";
-    return htmlReceipt(status, title, message);
+    return textReceipt(status, title, message);
   }
   return jsonError(status, message);
 }
