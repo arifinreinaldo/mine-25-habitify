@@ -70,16 +70,24 @@ sent at 23:58 and tapped at 00:03 must still complete the day it was sent for.
 ### 2.3 Endpoint
 
 ```
-POST {SUPABASE_URL}/functions/v1/complete-habit?t=<token>
+POST {SUPABASE_URL}/functions/v1/complete-habit    Authorization: Bearer <token>
 GET  {SUPABASE_URL}/functions/v1/complete-habit?t=<token>
 ```
 
-Both methods are supported and do the same work. They differ only in response body:
+Both methods are supported and do the same work. They differ in how the token arrives
+and in the response body:
 
-| Method | Caller | Response |
-|---|---|---|
-| `POST` | CloudPush background action | `200` JSON `{message, data:{completed:<int>}}` |
-| `GET` | a human opening the URL in a browser | `200` self-contained HTML receipt page |
+| Method | Caller | Token carrier | Response |
+|---|---|---|---|
+| `POST` | CloudPush background action | `Authorization: Bearer` | `200` JSON `{message, data:{completed:<int>}}` |
+| `GET` | a human opening the URL in a browser | `?t=` query param | `200` plain-text receipt |
+
+The bearer is the primary carrier, per `cloudflare_notifier/docs/cloudpush-action-spec.md`
+section 2.3. A URL never carries the token to CloudPush any more: the edge gateway logs
+request URLs, and this token completes habits. `?t=` stays accepted on **both** methods —
+it is the only carrier a browser address bar has, and tokens minted before the change
+keep working for their full 24h TTL. `complete-habit` reads the bearer first and falls
+back to the query param.
 
 `GET` exists because CloudPush's Detail screen renders every action URL as a tappable
 link chip (`ui/components/LinkToken.kt:57`), so a background action's URL **will** be
@@ -352,8 +360,12 @@ export function mintActionToken(
   opts: { userId: string; target: string; date: string; ttlSeconds?: number },
 ): Promise<string>;
 
-/** {SUPABASE_URL}/functions/v1/complete-habit?t=<token> */
-export function completeUrl(supabaseUrl: string, token: string): string;
+/** {SUPABASE_URL}/functions/v1/complete-habit - the token rides in the action's
+ *  Authorization header, never in this URL. */
+export function completeUrl(supabaseUrl: string): string;
+
+/** Reads `Authorization: Bearer <token>`; "" when absent or not a bearer. */
+export function bearerToken(authHeader: string | null): string;
 ```
 
 `ttlSeconds` defaults to 86400 (24h). Use `crypto.subtle.importKey('raw', …, {name:'HMAC',
@@ -479,11 +491,17 @@ emits it on exactly the three completing actions and never on `Open Reminder`.
 
    ```bash
    curl -i -X POST "$SUPABASE_URL/functions/v1/complete-habit?t=bogus"
+   curl -i -X POST "$SUPABASE_URL/functions/v1/complete-habit" -H "Authorization: Bearer bogus"
    ```
 
    Expect `401` **from our own handler** with a JSON body naming a bad token, or `400`
    for a malformed one — not the gateway's bare `{"code":401,"message":"Missing
    authorization header"}`. The two are easy to confuse; the body tells them apart.
+
+   Run the second curl too. It is the shape CloudPush actually sends, and it is the one
+   new failure mode: the gateway must forward a non-JWT bearer untouched. A gateway
+   `{"code":401,"message":"Invalid JWT"}` there means `verify_jwt = false` is not in
+   force, not that the token is wrong.
 
    Then redeploy once more **without** the flag and re-run the same curl, to prove
    `supabase/config.toml` is carrying the setting on its own. If it comes back as the

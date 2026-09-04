@@ -195,7 +195,7 @@ Deno.serve(async (req) => {
           title,
           body,
           topic,
-          actions: reminderActions(appUrl, completeUrl(supabaseUrl, token)),
+          actions: reminderActions(appUrl, completeUrl(supabaseUrl), token),
         });
 
         if (success) {

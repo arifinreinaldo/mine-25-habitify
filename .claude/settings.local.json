@@ -29,7 +29,10 @@
       "Bash(bunx oh-my-opencode install --no-tui --claude=max --gemini=true)",
       "Bash(bunx oh-my-opencode:*)",
       "Bash(opencode auth login:*)",
-      "Bash(npm list:*)"
+      "Bash(npm list:*)",
+      "Bash(npx supabase functions deploy:*)",
+      "Bash(npx supabase functions list:*)",
+      "Bash(npx supabase secrets list:*)"
     ]
   }
 }

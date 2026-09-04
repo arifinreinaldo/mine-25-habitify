@@ -1,12 +1,13 @@
 // Token-authenticated habit completion, fired by a CloudPush notification action
-// button (background POST) or by a human tapping the same link in a browser (GET,
-// see the note in fcm-action-token-spec.md section 2.3).
+// button (background POST, token in `Authorization: Bearer`) or by a human tapping the
+// same link in a browser (GET, token in `?t=`, see fcm-action-token-spec.md section 2.3).
 //
 // Deployment note: this function must be deployed with JWT verification OFF
 // (`supabase/config.toml` sets `verify_jwt = false` for this function). Supabase's API
 // gateway rejects requests with no `Authorization` header before this code ever runs,
-// and a CloudPush background POST carries no Supabase JWT. The HMAC token in the `t`
-// query param is the sole authentication — if `verify_jwt` reverts to true, every
+// and a CloudPush background POST carries no Supabase JWT - the Authorization header it
+// does send holds this function's own HMAC token, which is not a JWT and would fail
+// verification. That HMAC token is the sole authentication — if `verify_jwt` reverts to true, every
 // request 401s at the gateway before reaching this file, which looks exactly like a
 // token bug. See fcm-action-token-spec.md section 5.2 / section 8 for how to confirm
 // the gateway is actually letting requests through.
@@ -14,7 +15,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // Signing is imported, never reimplemented: minting (mintActionToken) and verifying
 // below must share one algorithm and one truncation length, or every live token 401s.
-import { signActionPayload } from "../_shared/notifier.ts";
+import { bearerToken, signActionPayload } from "../_shared/notifier.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -179,7 +180,13 @@ Deno.serve(async (req) => {
   }
 
   const url = new URL(req.url);
-  const token = url.searchParams.get("t");
+  // Two carriers, one token. CloudPush sends it as `Authorization: Bearer <token>`
+  // (cloudpush-action-spec.md section 2.3) - a bearer never lands in the gateway's
+  // access log or a browser's history. `?t=` stays accepted because it is how a human
+  // opens the same link in a browser, and because tokens minted before this change
+  // stay in flight for their full 24h TTL.
+  const token = bearerToken(req.headers.get("authorization")) ||
+    url.searchParams.get("t");
 
   if (!token) {
     return respondError(isGet, 400, "Missing token");

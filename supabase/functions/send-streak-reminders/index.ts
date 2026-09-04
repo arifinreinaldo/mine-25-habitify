@@ -368,8 +368,9 @@ Deno.serve(async (req) => {
           topic,
           actions: streakActions(
             appUrl,
-            completeUrl(supabaseUrl, allToken),
-            completeUrl(supabaseUrl, minimumToken),
+            completeUrl(supabaseUrl),
+            allToken,
+            minimumToken,
           ),
         });
 

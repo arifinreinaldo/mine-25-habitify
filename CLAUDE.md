@@ -87,7 +87,10 @@ background POSTs, not `ACTION_VIEW` links — tapping one must write the complet
 open nothing. `send-ntfy-notifications` and `send-streak-reminders` mint a short-lived
 HMAC token (`mintActionToken`, `ACTION_TOKEN_SECRET`) binding `userId` + `target` (a
 habit UUID or `"all"`) + `date`, and point the action at
-`POST {SUPABASE_URL}/functions/v1/complete-habit?t=<token>`. `complete-habit` verifies
+`POST {SUPABASE_URL}/functions/v1/complete-habit` with the token in
+`Authorization: Bearer` (never in the URL — the gateway logs URLs). `?t=` is still
+accepted, for the browser GET path and for tokens minted before the switch.
+`complete-habit` verifies
 the token, then writes with a service-role client scoped by the token's own `userId` —
 the token is the only authentication, since a CloudPush background POST carries no
 Supabase JWT. Full contract: `docs/fcm-action-token-spec.md`.

@@ -6,6 +6,10 @@ export interface PushAction {
   url: string;
   label?: string;
   method?: string;
+  /** Bearer credential for a background action. The worker sends it as
+   *  `Authorization: Bearer <token>`, never in the URL - see
+   *  cloudflare_notifier/docs/cloudpush-action-spec.md section 2.3. */
+  token?: string;
 }
 
 // The per-user FCM topic is NOT derived here any more. It lives in profiles.push_topic,
@@ -105,28 +109,50 @@ export async function mintActionToken(
   return `${payloadB64}.${await signActionPayload(secret, payload)}`;
 }
 
-/** {SUPABASE_URL}/functions/v1/complete-habit?t=<token> */
-export function completeUrl(supabaseUrl: string, token: string): string {
-  return `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/complete-habit?t=${encodeURIComponent(token)}`;
+/** The action token as CloudPush sends it on a background request:
+ *  `Authorization: Bearer <token>` (cloudpush-action-spec.md section 2.3). Returns ""
+ *  when the header is absent or is not a bearer, so the caller can fall back to `?t=`.
+ *  complete-habit calls THIS - a second copy of the prefix arithmetic is one off-by-one
+ *  away from silently reading a truncated token and 401ing every action. */
+export function bearerToken(authHeader: string | null): string {
+  const header = authHeader ?? "";
+  return /^bearer /i.test(header) ? header.slice(7).trim() : "";
 }
 
-/** Reminder push (one specific habit): [Open Reminder, Mark Complete]. Mark Complete
- *  is a background POST - completeUrl is a token URL from mintActionToken +
- *  completeUrl, not a dashboard link. */
-export function reminderActions(appUrl: string, completeUrl: string): PushAction[] {
+/** {SUPABASE_URL}/functions/v1/complete-habit - no token in the URL. The action token
+ *  rides in the Authorization header (PushAction.token), so it stays out of the edge
+ *  gateway's access logs and out of any browser history. */
+export function completeUrl(supabaseUrl: string): string {
+  return `${supabaseUrl.replace(/\/+$/, "")}/functions/v1/complete-habit`;
+}
+
+/** Reminder push (one specific habit): [Open Reminder, Mark Complete]. Mark Complete is
+ *  a background POST - CloudPush fires it from the shade with the bearer token and opens
+ *  nothing. token comes from mintActionToken and binds this habit and this date. */
+export function reminderActions(
+  appUrl: string,
+  completeUrl: string,
+  token: string,
+): PushAction[] {
   return [
     { url: `${appUrl}/dashboard`, label: "Open Reminder" },
-    { url: completeUrl, label: "Mark Complete", method: "POST" },
+    { url: completeUrl, label: "Mark Complete", method: "POST", token },
   ];
 }
 
 /** Streak push (N incomplete habits): [Open Reminder, Full Complete, Minimum Complete].
- *  allUrl and minimumUrl are token URLs from mintActionToken + completeUrl, targeting
- *  "all" and the single highest-streak habit respectively. Both are background POSTs. */
-export function streakActions(appUrl: string, allUrl: string, minimumUrl: string): PushAction[] {
+ *  Both background POSTs hit the same URL and differ only by token - allToken targets
+ *  "all", minimumToken the single highest-streak habit. CloudPush treats the background
+ *  actions of one push as alternatives: the first one to succeed disables the other. */
+export function streakActions(
+  appUrl: string,
+  completeUrl: string,
+  allToken: string,
+  minimumToken: string,
+): PushAction[] {
   return [
     { url: `${appUrl}/dashboard`, label: "Open Reminder" },
-    { url: allUrl, label: "Full Complete", method: "POST" },
-    { url: minimumUrl, label: "Minimum Complete", method: "POST" },
+    { url: completeUrl, label: "Full Complete", method: "POST", token: allToken },
+    { url: completeUrl, label: "Minimum Complete", method: "POST", token: minimumToken },
   ];
 }
